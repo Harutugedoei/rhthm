@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Metronome</title>
+    <style>
+        body {
+            background-color: black;
+            color: white;
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+        }
+        canvas {
+            border: 1px solid white;
+        }
+        .controls {
+            margin-top: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .controls label {
+            margin-right: 10px;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas" width="700" height="700"></canvas>
+    <div class="controls">
+        <label>
+            円の数: <input type="number" id="circleCount" value="3">
+        </label>
+        <label>
+            bpm: <input type="number" id="bpm" value="60">
+        </label>
+        <label>
+            拍子: <input type="number" id="beats" value="4">
+        </label>
+        <label>
+            音量: <input type="range" id="volume" min="0" max="1" step="0.01" value="0.5">
+        </label>
+        <button id="startBtn">スタート</button>
+        <button id="stopBtn">ストップ</button>
+        <label>
+            ドットの種類:
+            <select id="dotType">
+                <option value="Main">青</option>
+                <option value="OffBeat">オレンジ</option>
+                <option value="Secondary">白</option>
+            </select>
+        </label>
+    </div>
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        let dots = [];
+        let isRunning = false;
+        let animationFrameId;
+        let angle = 0;
+        let audioContext;
+        let gainNode;
+
+        document.getElementById('startBtn').addEventListener('click', start);
+        document.getElementById('stopBtn').addEventListener('click', stop);
+        document.getElementById('volume').addEventListener('input', updateVolume);
+        canvas.addEventListener('click', addDot);
+
+        function draw() {
+            const circleCount = document.getElementById('circleCount').value;
+            const bpm = document.getElementById('bpm').value;
+            const beats = document.getElementById('beats').value;
+            const timePerBeat = 60 / bpm;
+            const totalTime = timePerBeat * beats;
+
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // 円を描く
+            for (let i = 1; i <= circleCount; i++) {
+                ctx.beginPath();
+                ctx.arc(canvas.width / 2, canvas.height / 2, i * 40, 0, Math.PI * 2);
+                ctx.strokeStyle = 'white';
+                ctx.stroke();
+            }
+
+            // 拍子の数で円を等分する点線を描く
+            for (let i = 0; i < beats; i++) {
+                const theta = (i * 2 * Math.PI) / beats;
+                const x = canvas.width / 2 + (circleCount * 40) * Math.cos(theta);
+                const y = canvas.height / 2 + (circleCount * 40) * Math.sin(theta);
+                ctx.beginPath();
+                ctx.setLineDash([5, 5]); // 点線を設定
+                ctx.moveTo(canvas.width / 2, canvas.height / 2);
+                ctx.lineTo(x, y);
+                ctx.strokeStyle = 'white';
+                ctx.stroke();
+                ctx.setLineDash([]); // 点線設定をリセット
+            }
+
+            // 回転する線を描く
+            const radius = circleCount * 40;
+            const x = canvas.width / 2 + radius * Math.cos(angle);
+            const y = canvas.height / 2 + radius * Math.sin(angle);
+            ctx.beginPath();
+            ctx.moveTo(canvas.width / 2, canvas.height / 2);
+            ctx.lineTo(x, y);
+            ctx.strokeStyle = 'white';
+            ctx.stroke();
+
+            // ドットを描く
+            dots.forEach(dot => {
+                ctx.beginPath();
+                ctx.arc(dot.x, dot.y, 5, 0, Math.PI * 2);
+                ctx.fillStyle = dot.color;
+                ctx.fill();
+            });
+
+            // 線を回転させる
+            angle += (Math.PI * 2) / (totalTime * 60);
+            if (angle >= Math.PI * 2) angle = 0;
+
+            // 線がドットに交差するかチェックする
+            dots.forEach(dot => {
+                const dAngle = Math.atan2(dot.y - canvas.height / 2, dot.x - canvas.width / 2);
+                if (Math.abs(dAngle - angle) < 0.05 || Math.abs(dAngle - angle + Math.PI * 2) < 0.05) {
+                    playSound(dot.type);
+                }
+            });
+
+            if (isRunning) {
+                animationFrameId = requestAnimationFrame(draw);
+            }
+        }
+
+        function start() {
+            if (!isRunning) {
+                if (!audioContext) {
+                    // オーディオコンテキストを作成
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    gainNode = audioContext.createGain();
+                    gainNode.connect(audioContext.destination);
+                }
+                isRunning = true;
+                draw();
+            }
+        }
+
+        function stop() {
+            if (isRunning) {
+                isRunning = false;
+                cancelAnimationFrame(animationFrameId);
+                angle = 0;
+                dots = [];
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+            }
+        }
+
+        function addDot(event) {
+            const rect = canvas.getBoundingClientRect();
+            const x = event.clientX - rect.left;
+            const y = event.clientY - rect.top;
+            const dotType = document.getElementById('dotType').value;
+            let color;
+            switch (dotType) {
+                case 'Main': color = 'blue'; break;
+                case 'OffBeat': color = 'orange'; break;
+                case 'Secondary': color = 'white'; break;
+            }
+            dots.push({ x, y, type: dotType, color });
+        }
+
+        function updateVolume() {
+            const volume = document.getElementById('volume').value;
+            if (gainNode) {
+                gainNode.gain.setValueAtTime(volume, audioContext.currentTime);
+            }
+        }
+
+        function playSound(type) {
+            if (!audioContext) return;
+
+            // オシレーター（発振器）ノードを作成
+            const oscillator = audioContext.createOscillator();
+            // オシレーターをゲインノードに接続し、ゲインノードをオーディオコンテキストの出力（スピーカー）に接続
+            oscillator.connect(gainNode);
+
+            // オシレーターの波形をサイン波に設定
+            oscillator.type = 'sine';
+
+            // ドットの種類に応じて周波数を設定
+            switch (type) {
+                case 'Main':
+                    oscillator.frequency.setValueAtTime(440, audioContext.currentTime); // 青ドットは440Hz
+                    break;
+                case 'OffBeat':
+                    oscillator.frequency.setValueAtTime(523.25, audioContext.currentTime); // オレンジドットは523.25Hz (C4)
+                    break;
+                case 'Secondary':
+                    oscillator.frequency.setValueAtTime(659.25, audioContext.currentTime); // 白ドットは659.25Hz (E4)
+                    break;
+            }
+
+            // オシレーターを開始
+            oscillator.start();
+            // 0.1秒後にオシレーターを停止
+            oscillator.stop(audioContext.currentTime + 0.1);
+        }
+    </script>
+</body>
+</html>
